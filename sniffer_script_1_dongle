@@ -1,0 +1,73 @@
+import multiprocessing
+import subprocess
+import time
+import re
+
+dongle = subprocess.Popen("ifconfig", stdout=subprocess.PIPE).stdout
+output = dongle.read().decode()
+
+
+def dongle_name(config_value):
+    """to get the name of the sniffer dongle"""
+    dongles = []
+    for value in config_value.splitlines():
+        name = re.search(r"wlx\w+", value)
+        if name:
+            dongles.append(name.group(0))
+    return dongles
+
+
+def setup_dongle(dongle_dsn, channel, bw):
+    """runs the sniffer by getting dongle name from ifconfig channel , bandwidth from user"""
+    try:
+        results = subprocess.run(["sudo", "ip", "link", "set", dongle_dsn, "down"])
+        if results.returncode != 0:
+            return f"Failed to set dongle {dongle_dsn} down"
+        time.sleep(5)
+        results = subprocess.run(["sudo", "iw", dongle_dsn, "set", "monitor", "control"])
+        if results.returncode != 0:
+            return f"Failed to set monitor mode in dongle {dongle_dsn}"
+        time.sleep(5)
+        results = subprocess.run(["sudo", "ip", "link", "set", dongle_dsn, "up"])
+        if results.returncode != 0:
+            return f"Failed to set dongle {dongle_dsn} up"
+        time.sleep(5)
+        results = subprocess.run(["sudo", "iw", "dev", dongle_dsn, "set", "channel", str(channel), str(bw)])
+        if results.returncode != 0:
+            return f"Failed to set channel and bandwidth {dongle_dsn}"
+        time.sleep(5)
+    except Exception as e:
+        return str(e)
+
+
+sniffer_dongle = dongle_name(output)
+
+if not sniffer_dongle:
+    print("No wlx interfaces found!")
+    exit(1)
+
+dongle_1 = sniffer_dongle[0]
+print("dongle 1:", dongle_1)
+
+
+def run_sniffer(dongle_dsn_1):
+    """runs wireshark using dongles"""
+    results = subprocess.run(["sudo", "wireshark", "-i", dongle_dsn_1, "-k", "-S", "-l"])
+    if results.returncode != 0:
+        return "Failed to start Wireshark"
+    time.sleep(5)
+    return "Sniffer started successfully"
+
+
+channel_1 = input("Enter channel : ")
+processes = []
+for dongle_dsn, channel, bw in [(dongle_1, channel_1, "HT20")]:
+    process = multiprocessing.Process(target=setup_dongle, args=(dongle_dsn, channel, bw))
+    processes.append(process)
+    process.start()
+
+
+for process in processes:
+    process.join()
+
+run_sniffer(dongle_1)
